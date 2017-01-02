@@ -1,0 +1,21 @@
+epoll test
+1:epoll_wait触发后，在send数据前，对端的网络断掉了,一直不能恢复。测试这个情况下，epoll_wait的反应
+	(1):在非阻塞LT模式下，send会发送到发送缓冲区满，返回errno=EAGAIN错误。
+		此后再调用epoll_ctl(m_epollfd, EPOLL_CTL_MOD, fd, &m_epev);
+		然后就一直等到TCP的一个超时后，epoll_wait才会再次被触发，返回的event=EPOLLERR|EPOLLRDHUP
+		
+注意：epoll_wait能被触发的事件是接收缓冲区有读的数据或者发送缓冲区有可写的buff。
+	 发送缓冲区满了后，再次调用	epoll_ctl（WRITE）是不会被触发的。
+
+2:	在非阻塞IO模式下，当connet函数返回-1时，需判断errno == EINPROGRESS，表明链接正在进行。
+	为了判断connect是否真的成功，需要做如下设置：	 
+	epoll_event m_epev;
+	m_epev.data.fd = fd;    
+    m_epev.events = EPOLLOUT|EPOLLRDHUP;//EPOLLET|EPOLLIN|EPOLLOUT;
+    int ret =epoll_ctl(m_epollfd, EPOLL_CTL_ADD, fd, &m_epev);
+	然后就能通过epoll_wait来判断。当epoll_wait触发后，
+	如果链接成功：就在EPOLLOUT中检测该fd。connect超时（大概125秒）后失败：则检测EPOLLRDHUP或EPOLLERR或EPOLLHUP
+
+
+2： send函数在阻塞IO模式下，当发送缓冲区满了之后会，再次调用send函数，程序会被阻塞住。
+	如果在其它地方调用close(fd)后，send会返回 -1。这时的errno= EBADF;程序继续执行
